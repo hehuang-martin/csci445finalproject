@@ -36,7 +36,13 @@ class Run:
         self.joint_angles = np.zeros(7)
 
         # goal location
-        self.goal_position = (1.5, 2.5)
+        self.goal_position = (1.6, 2.5)
+
+        self.offset3 = 0.3105
+        #self.arm_x = 1.6001
+        #self.arm_y = 3.3999
+        self.l1 = 0.4
+        self.l2 = 0.39
 
     def sleep(self, time_in_sec):
         """Sleeps for the specified amount of time while keeping odometry up-to-date
@@ -99,14 +105,58 @@ class Run:
         image_x = position[0] * 100
         image_y = self.map.height - position[1]*100
         return (int(image_x), int(image_y))
-    
+
     def distance(self, a, b):
         return math.sqrt(math.pow(a[0] - b[0], 2) + math.pow(a[1] - b[1], 2))
-    
+
     def image_to_real(self, position):
         real_x = position[0] / 100.
         real_y = (self.map.height - position[1]) / 100.
         return (real_x, real_y)
+
+
+    ### section2
+    def inverse_kinematics(self, _x, _z):
+        z = _z - self.offset3
+        x = _x
+        r = math.sqrt(x**2 + z**2)
+        alpha = math.acos((self.l1**2 + self.l2**2 - r**2)/(2*self.l1*self.l2))
+        theta2 = math.pi - alpha
+        beta = math.acos((r**2 + self.l1**2 - self.l2**2)/(2*self.l1*r))
+        theta1 = math.atan2(x, z) - beta
+
+        if theta2 < -math.pi/2 or theta2 > math.pi/2 or theta1 < -math.pi/2 or theta1 > math.pi/2:
+            theta2 = math.pi + alpha
+            theta1 = math.atan2(x, z) + beta
+        theta3 = math.pi/2 - (theta1 + theta2)
+        self.arm.go_to(5, theta3)
+        self.arm.go_to(1, theta1)
+        self.arm.go_to(3, theta2)
+        #print("Go to [{},{}], IK: [{} deg, {} deg]".format(x, z, math.degrees(theta1), math.degrees(theta2)))
+
+    def grip_and_place(self, dist):
+        _z = 0.125
+        self.inverse_kinematics(dist, 0.3)
+        for z in np.arange(0.3, _z, -0.01):
+            self.inverse_kinematics(dist, z)
+            self.time.sleep(0.05)
+        self.time.sleep(5)
+        #self.inverse_kinematics(2.5, 0.1617)
+        self.arm.close_gripper()
+        self.time.sleep(5)
+        # Placing cup onto shelf, constants are based on relative postion of arm and shelf
+        self.inverse_kinematics(0.5399, 0.55)
+        self.time.sleep(5)
+        self.arm.go_to(0, -3*math.pi/4)
+        self.time.sleep(5)
+        self.arm.open_gripper()
+        self.time.sleep(10)
+
+    # calculates distance betweeen arm and cup
+    def distance_to_arm(self, x, y):
+        distances = [math.fabs(x - 0.025), math.fabs(x - 3.025), math.fabs(y - 0.025), math.fabs(y - 3.025)]
+        dist = min(distances) + 0.3749 - 0.26
+        return dist
 
     def run(self):
         self.create.start()
@@ -118,7 +168,7 @@ class Run:
         self.time.sleep(2)
         start_position = self.create.sim_get_position()
         #print(start_position)
-        
+
         self.odometry.x = start_position[0]
         self.odometry.y = start_position[1]
         self.odometry.theta = 0
@@ -128,7 +178,7 @@ class Run:
         path = self.rrt.shortest_path(goal)
         #print("Path length: {}".format(len(path)))
         base_speed = 100
-        
+
         # this is for visualize path
         for v in self.rrt.T:
             for u in v.neighbors:
@@ -147,9 +197,9 @@ class Run:
         self.visualize()
         self.virtual_create.enable_buttons()
         self.visualize()
-        
+
         count = 0
-        
+
         # execute the path
         for p in path:
             real_position = self.image_to_real(p.state)
@@ -179,19 +229,25 @@ class Run:
                 x, y, theta = self.pf.get_estimate()
                 error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y))
                 error_theta = abs(theta - self.odometry.theta)
-                
+
                 if error_pos < 0.05:
                     self.odometry.x = x
                     self.odometry.y = y
-                
+
                 #print("Error: {}, {}, Estimate pos: ({}, {}, {}), odometry pos: ({}, {}, {})".format(error_pos, error_theta, x, y, theta, self.odometry.x, self.odometry.y, self.odometry.theta))
             self.visualize()
             count += 1
 
         reached_goal_location = (self.odometry.x, self.odometry.y)
         print(reached_goal_location)
-        while True:
-            shit = 1
+        location = self.create.sim_get_position()
+
+        # distance_to_arm needs cup's absolute x, y coordinates
+        # for current arm and shelf setup, cup's x, y need to satisfy x = 1.6, y = 2.38~2.59
+        dist = self.distance_to_arm(location[0], location[1])
+        self.grip_and_place(dist)
+
+
         '''
         while True:
             b = self.virtual_create.get_last_button()
