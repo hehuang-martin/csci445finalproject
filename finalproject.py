@@ -7,6 +7,7 @@ import rrt_map
 import particle_filter
 import rrt
 import numpy as np
+import time
 
 
 
@@ -31,7 +32,7 @@ class Run:
         # TODO identify good PID controller gains
         self.pidTheta = pid_controller.PIDController(300, 5, 50, [-10, 10], [-200, 200], is_angle=True)#pid_controller.PIDController(200, 0, 100, [-10, 10], [-50, 50], is_angle=True)
         # TODO identify good particle filter parameters
-        self.pf = particle_filter.ParticleFilter(self.mapJ, 1000, 0.01, 0.05, 0.1)#particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
+        self.pf = particle_filter.ParticleFilter(self.mapJ, 1200, 0.01, 0.05, 0.1)#particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
 
         self.joint_angles = np.zeros(7)
 
@@ -65,7 +66,7 @@ class Run:
         old_theta = self.odometry.theta
         while math.fabs(math.atan2(
             math.sin(goal_theta - self.odometry.theta),
-            math.cos(goal_theta - self.odometry.theta))) > 0.05:
+            math.cos(goal_theta - self.odometry.theta))) > 0.01:
             output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
             self.create.drive_direct(int(+output_theta), int(-output_theta))
             self.sleep(0.01)
@@ -88,7 +89,7 @@ class Run:
             # stop if close enough to goal
             distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
             if distance < 0.05:
-                self.create.drive_direct(0, 0)
+                #self.create.drive_direct(0, 0)
                 break
             self.sleep(0.01)
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
@@ -113,6 +114,12 @@ class Run:
         real_x = position[0] / 100.
         real_y = (self.map.height - position[1]) / 100.
         return (real_x, real_y)
+    
+    def calcualte_cup_position(self, location):
+        distance = 0.05
+        cup_x = location[0] - distance * math.cos(location[2])
+        cup_y = location[1] - distance * math.sin(location[2])
+        return (cup_x, cup_y) 
 
 
     ### section2
@@ -159,6 +166,7 @@ class Run:
         return dist
 
     def run(self):
+        start_time = time.time()
         self.create.start()
         self.create.safe()
 
@@ -187,8 +195,6 @@ class Run:
             self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
         self.map.save("lab10_rrt.png")
 
-        self.virtual_create.set_pose((1.5, 1.5, 0.1), 0)
-
         # request sensors
         self.create.start_stream([
             create2.Sensor.LeftEncoderCounts,
@@ -202,6 +208,12 @@ class Run:
 
         # execute the path
         for p in path:
+            # avoid initial position
+            if count == 0:
+                count += 1
+                distance = self.sonar.get_distance()
+                self.pf.measure(distance, 0)
+                continue
             real_position = self.image_to_real(p.state)
             goal_x = real_position[0]
             goal_y = real_position[1]
@@ -218,35 +230,47 @@ class Run:
                     self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
 
                     distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
-                    if distance < 0.1:
-                        self.create.drive_direct(0, 0)
+                    #print(distance)
+                    if distance < 0.05:
+                        #self.create.drive_direct(0, 0)
                         break
                     self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
-            if count % 3 == 0:
+            if count % 3 == 0 or count == len(path) - 1:
                 distance = self.sonar.get_distance()
                 self.pf.measure(distance, 0)
 
                 x, y, theta = self.pf.get_estimate()
                 error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y))
                 error_theta = abs(theta - self.odometry.theta)
-
+                #print("{}: {}".format(error_pos, (x, y)))
                 if error_pos < 0.05:
                     self.odometry.x = x
                     self.odometry.y = y
-
+                #print(math.degrees(theta))
                 #print("Error: {}, {}, Estimate pos: ({}, {}, {}), odometry pos: ({}, {}, {})".format(error_pos, error_theta, x, y, theta, self.odometry.x, self.odometry.y, self.odometry.theta))
             self.visualize()
             count += 1
 
+        self.create.drive_direct(0, 0)
+        self.go_to_angle(math.pi/2.)
         reached_goal_location = (self.odometry.x, self.odometry.y)
-        print(reached_goal_location)
+        print("odometry theta: {}".format(math.degrees(self.odometry.theta)))
+        print("estimate goal location: {}".format(reached_goal_location))
+        self.create.sim_get_position()
+        self.time.sleep(2)
         location = self.create.sim_get_position()
+        print("real goal location: {}".format(location))
+        #location = reached_goal_location
+        
 
         # distance_to_arm needs cup's absolute x, y coordinates
         # for current arm and shelf setup, cup's x, y need to satisfy x = 1.6, y = 2.38~2.59
         dist = self.distance_to_arm(location[0], location[1])
         self.grip_and_place(dist)
 
+        print("--- %s seconds ---" % (time.time() - start_time))
+        while True:
+            shit = 0
 
         '''
         while True:
