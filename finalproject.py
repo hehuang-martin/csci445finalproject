@@ -244,12 +244,6 @@ class Run:
                     self.create.drive_direct(0, 0)
                     break
 
-    def compensate_angle(self, location):
-        sonar_reading = self.sonar.get_distance()
-        desired_distance = self.mapJ.closest_distance([location[0], location[1]], -math.pi/2.)
-        while sonar_reading - desired_distance > 0.5:
-            self.create.dirve(-20, 20)
-
     def run(self):
         start_time = time.time()
         self.create.start()
