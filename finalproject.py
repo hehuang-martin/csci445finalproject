@@ -66,7 +66,7 @@ class Run:
         old_theta = self.odometry.theta
         while math.fabs(math.atan2(
             math.sin(goal_theta - self.odometry.theta),
-            math.cos(goal_theta - self.odometry.theta))) > 0.18:
+            math.cos(goal_theta - self.odometry.theta))) > 0.017:
             output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
             self.create.drive_direct(int(+output_theta), int(-output_theta))
             self.sleep(0.01)
@@ -122,32 +122,6 @@ class Run:
         cup_y = location[1] - distance * math.sin(location[2])
         return (cup_x, cup_y)
 
-    def final_rotate(self):
-        diff_x = (3 - self.goal_position[0], self.goal_position[0])
-        diff_y = (3 - self.goal_position[1], self.goal_position[1])
-        if diff_x[0] < diff_x[1]:
-            if diff_y[0] < diff_x[0]:
-                return -math.pi/2.
-            elif diff_y[1] < diff_x[0]:
-                return math.pi/2.
-            elif diff_x[0] == diff_y[0]:
-                return math.pi+math.pi/4.
-            elif diff_x[0] == diff_y[1]:
-                return math.pi-math.pi/4.
-            else:
-                return math.pi
-        else:
-            if diff_y[0] < diff_x[1]:
-                return -math.pi/2.
-            elif diff_y[1] < diff_x[1]:
-                return math.pi/2.
-            elif diff_x[1] == diff_y[0]:
-                return -math.pi/4
-            elif diff_x[1] == diff_y[1]:
-                return math.pi/4
-            else:
-                return 0
-
 
     ### section2
     def inverse_kinematics(self, _x, _z):
@@ -168,7 +142,7 @@ class Run:
         self.arm.go_to(3, theta2)
         #print("Go to [{},{}], IK: [{} deg, {} deg]".format(x, z, math.degrees(theta1), math.degrees(theta2)))
 
-    def grip_and_place(self, dist):
+    def grip_and_place(self, dist, shelf):
         _z = 0.125
         self.inverse_kinematics(dist, 0.3)
         for z in np.arange(0.3, _z, -0.01):
@@ -182,9 +156,19 @@ class Run:
         for z in np.arange(_z, 0.30, 0.01):
             self.inverse_kinematics(dist, z)
             self.time.sleep(0.05)
-        self.inverse_kinematics(0.5399, 0.55)
-        self.time.sleep(5)
-        self.arm.go_to(0, -3*math.pi/4)
+        if shelf == 1:
+            self.inverse_kinematics(0.5399, 0.55)
+            self.time.sleep(5)
+            self.arm.go_to(0, -3*math.pi/4)
+        elif shelf == 2:
+            self.inverse_kinematics(0.36, 0.85)
+            self.time.sleep(5)
+            self.arm.go_to(0, -4*math.pi/5)
+        elif shelf == 3:
+            self.arm.go_to(3, 0)
+            self.arm.go_to(5, -math.pi/6)
+            self.time.sleep(5)
+            self.arm.go_to(1, -math.pi/6)
         self.time.sleep(5)
         self.arm.open_gripper()
         self.time.sleep(10)
@@ -197,7 +181,7 @@ class Run:
         for pair in dist_to_walls:
             if pair[1] < min:
                 min = pair[1]
-                wall_dist = (pair[0], pair[1] + 0.3749 - 0.26 - 0.055)
+                wall_dist = (pair[0], pair[1] + 0.3749 - 0.26 - 0.058)
         print("Closest to wall ", wall_dist[0], "; x distance: ", wall_dist[1])
         return wall_dist
 
@@ -243,6 +227,12 @@ class Run:
                 if x_distance < 0.017 and distance < 0.03:
                     self.create.drive_direct(0, 0)
                     break
+
+    def compensate_angle(self, location):
+        sonar_reading = self.sonar.get_distance()
+        desired_distance = self.mapJ.closest_distance([location[0], location[1]], -math.pi/2.)
+        while sonar_reading - desired_distance > 0.5:
+            self.create.dirve(-20, 20)
 
     def run(self):
         start_time = time.time()
@@ -315,7 +305,7 @@ class Run:
 
                     distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
                     if distance < 0.05:
-                        self.create.drive_direct(0, 0)
+                        #self.create.drive_direct(0, 0)
                         break
                     self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
             if force_sense or count % 3 == 0 or count == len(path) - 1:
@@ -329,15 +319,14 @@ class Run:
                 force_sense = False
 
                 x, y, theta = self.pf.get_estimate()
-                error_pos = self.distance((x, y), self.get_position()) #self.get_position()   (self.odometry.x, self.odometry.y)
+                error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y)) #self.get_position()   (self.odometry.x, self.odometry.y)
                 error_theta = abs(theta - self.odometry.theta)
-                #print("{}: {}".format(error_pos, error_theta))
+                print("{}: {}".format(error_pos, error_theta))
                 if error_pos < 0.05:
-                    print("Update Location")
+                    print("Update")
                     self.odometry.x = x
                     self.odometry.y = y
-                if error_theta < 0.02:
-                    print("Update Angle")
+                if error_theta < 0.1:
                     self.odometry.theta = theta
                 #print(math.degrees(theta))
                 #print("Error: {}, {}, Estimate pos: ({}, {}, {}), odometry pos: ({}, {}, {})".format(error_pos, error_theta, x, y, theta, self.odometry.x, self.odometry.y, self.odometry.theta))
@@ -346,8 +335,7 @@ class Run:
 
         self.create.drive_direct(0, 0)
         self.compensate_location()
-        print(math.degrees(self.final_rotate()))
-        self.go_to_angle(self.final_rotate())
+        self.go_to_angle(-math.pi/2.)
         reached_goal_location = (self.odometry.x, self.odometry.y)
         print("odometry theta: {}".format(math.degrees(self.odometry.theta)))
         print("estimate goal location: {}".format(reached_goal_location))
@@ -365,7 +353,10 @@ class Run:
         # for current arm and shelf setup, cup's x, y need to satisfy x = 1.6, y = 2.38~2.59
         wall_dist = self.distance_to_arm(location[0], location[1])
         self.rotate_link0(wall_dist, location)
-        self.grip_and_place(wall_dist[1])
+
+        # self.grip_and_place(wall_dist[1], 1)
+        self.grip_and_place(wall_dist[1], 2)
+        # self.grip_and_place(wall_dist[1], 3)
 
         print("--- %s seconds ---" % (time.time() - start_time))
         while True:
