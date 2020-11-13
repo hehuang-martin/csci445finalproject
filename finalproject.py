@@ -66,7 +66,7 @@ class Run:
         old_theta = self.odometry.theta
         while math.fabs(math.atan2(
             math.sin(goal_theta - self.odometry.theta),
-            math.cos(goal_theta - self.odometry.theta))) > 0.01:
+            math.cos(goal_theta - self.odometry.theta))) > 0.017:
             output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
             self.create.drive_direct(int(+output_theta), int(-output_theta))
             self.sleep(0.01)
@@ -98,6 +98,7 @@ class Run:
         x, y, theta = self.pf.get_estimate()
         self.virtual_create.set_pose((x, y, 0.1), theta)
         data = []
+        #data.extend([self.odometry.x, self.odometry.y, 0.1, self.odometry.theta])
         for particle in self.pf._particles:
             data.extend([particle.x, particle.y, 0.1, particle.theta])
         self.virtual_create.set_point_cloud(data)
@@ -162,8 +163,43 @@ class Run:
     # calculates distance betweeen arm and cup
     def distance_to_arm(self, x, y):
         distances = [math.fabs(x - 0.025), math.fabs(x - 3.025), math.fabs(y - 0.025), math.fabs(y - 3.025)]
-        dist = min(distances) + 0.3749 - 0.26
+        dist = min(distances) + 0.3749 - 0.26 - 0.1
         return dist
+
+    def get_position(self):
+        self.create.sim_get_position()
+        self.time.sleep(1)
+        position = self.create.sim_get_position()
+        return position
+
+    def compensate_location(self):
+        current_loc = self.get_position()
+        self.odometry.x = current_loc[0]
+        self.odometry.y = current_loc[1]
+        base_speed = 20
+        while True:
+            state = self.create.update()
+            old_x = self.odometry.x
+            old_y = self.odometry.y
+            old_theta = self.odometry.theta
+            if state is not None:
+                self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+                goal_theta = math.atan2(self.goal_position[1] - self.odometry.y, self.goal_position[0] - self.odometry.x)
+                theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+                output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+                self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+
+                distance = math.sqrt(math.pow(self.goal_position[0] - self.odometry.x, 2) + math.pow(self.goal_position[1] - self.odometry.y, 2))
+                x_distance = abs(self.odometry.x - self.goal_position[0])
+                if x_distance < 0.017 and distance < 0.03:
+                    self.create.drive_direct(0, 0)
+                    break
+
+    def compensate_angle(self, location):
+        sonar_reading = self.sonar.get_distance()
+        desired_distance = self.mapJ.closest_distance([location[0], location[1]], -math.pi/2.)
+        while sonar_reading - desired_distance > 0.5:
+            self.create.dirve(-20, 20)
 
     def run(self):
         start_time = time.time()
@@ -175,7 +211,6 @@ class Run:
         self.create.sim_get_position()
         self.time.sleep(2)
         start_position = self.create.sim_get_position()
-        #print(start_position)
 
         self.odometry.x = start_position[0]
         self.odometry.y = start_position[1]
@@ -184,7 +219,6 @@ class Run:
         self.rrt.build(start_position, 6000, 6)
         goal = self.rrt.nearest_neighbor(self.real_to_image(self.goal_position))
         path = self.rrt.shortest_path(goal)
-        #print("Path length: {}".format(len(path)))
         base_speed = 100
 
         # this is for visualize path
@@ -205,6 +239,13 @@ class Run:
         self.visualize()
 
         count = 0
+        force_sense = False
+
+        # make the init rotation
+        initial_path = self.image_to_real(path[0].state)
+        second_path = self.image_to_real(path[1].state)
+        goal_theta = math.atan2(second_path[1] - initial_path[1], second_path[0] - initial_path[0])
+        self.go_to_angle(goal_theta)
 
         # execute the path
         for p in path:
@@ -230,36 +271,48 @@ class Run:
                     self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
 
                     distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
-                    #print(distance)
                     if distance < 0.05:
                         #self.create.drive_direct(0, 0)
                         break
                     self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
-            if count % 3 == 0 or count == len(path) - 1:
+            if force_sense or count % 3 == 0 or count == len(path) - 1:
                 distance = self.sonar.get_distance()
+                distance_on_map = self.mapJ.closest_distance([self.odometry.x, self.odometry.y], self.odometry.theta)
+                #print("Sonar sense: {}, {}".format(distance, distance_on_map))
+                if distance_on_map < 0.12 or distance_on_map > 3.3:
+                    force_sense = True
+                    continue
                 self.pf.measure(distance, 0)
+                force_sense = False
 
                 x, y, theta = self.pf.get_estimate()
-                error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y))
+                error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y)) #self.get_position()   (self.odometry.x, self.odometry.y)
                 error_theta = abs(theta - self.odometry.theta)
-                #print("{}: {}".format(error_pos, (x, y)))
+                print("{}: {}".format(error_pos, error_theta))
                 if error_pos < 0.05:
+                    print("Update")
                     self.odometry.x = x
                     self.odometry.y = y
+                if error_theta < 0.1:
+                    self.odometry.theta = theta
                 #print(math.degrees(theta))
                 #print("Error: {}, {}, Estimate pos: ({}, {}, {}), odometry pos: ({}, {}, {})".format(error_pos, error_theta, x, y, theta, self.odometry.x, self.odometry.y, self.odometry.theta))
             self.visualize()
             count += 1
 
         self.create.drive_direct(0, 0)
-        self.go_to_angle(math.pi/2.)
+        self.compensate_location()
+        self.go_to_angle(-math.pi/2.)
         reached_goal_location = (self.odometry.x, self.odometry.y)
         print("odometry theta: {}".format(math.degrees(self.odometry.theta)))
         print("estimate goal location: {}".format(reached_goal_location))
         self.create.sim_get_position()
         self.time.sleep(2)
         location = self.create.sim_get_position()
+        print(self.sonar.get_distance())
+        print(self.mapJ.closest_distance([location[0], location[1]], -math.pi/2.))
         print("real goal location: {}".format(location))
+        print("error: {}".format(self.distance(reached_goal_location, location)))
         #location = reached_goal_location
         
 
