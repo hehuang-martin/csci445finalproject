@@ -66,7 +66,7 @@ class Run:
         old_theta = self.odometry.theta
         while math.fabs(math.atan2(
             math.sin(goal_theta - self.odometry.theta),
-            math.cos(goal_theta - self.odometry.theta))) > 0.017:
+            math.cos(goal_theta - self.odometry.theta))) > 0.18:
             output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
             self.create.drive_direct(int(+output_theta), int(-output_theta))
             self.sleep(0.01)
@@ -121,6 +121,32 @@ class Run:
         cup_x = location[0] - distance * math.cos(location[2])
         cup_y = location[1] - distance * math.sin(location[2])
         return (cup_x, cup_y) 
+
+    def final_rotate(self):
+        diff_x = (3 - self.goal_position[0], self.goal_position[0])
+        diff_y = (3 - self.goal_position[1], self.goal_position[1])
+        if diff_x[0] < diff_x[1]:
+            if diff_y[0] < diff_x[0]:
+                return -math.pi/2.
+            elif diff_y[1] < diff_x[0]:
+                return math.pi/2.
+            elif diff_x[0] == diff_y[0]:
+                return math.pi+math.pi/4.
+            elif diff_x[0] == diff_y[1]:
+                return math.pi-math.pi/4.
+            else:
+                return math.pi
+        else:
+            if diff_y[0] < diff_x[1]:
+                return -math.pi/2.
+            elif diff_y[1] < diff_x[1]:
+                return math.pi/2.
+            elif diff_x[1] == diff_y[0]:
+                return -math.pi/4
+            elif diff_x[1] == diff_y[1]:
+                return math.pi/4
+            else:
+                return 0
 
 
     ### section2
@@ -272,7 +298,7 @@ class Run:
 
                     distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
                     if distance < 0.05:
-                        #self.create.drive_direct(0, 0)
+                        self.create.drive_direct(0, 0)
                         break
                     self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
             if force_sense or count % 3 == 0 or count == len(path) - 1:
@@ -286,14 +312,15 @@ class Run:
                 force_sense = False
 
                 x, y, theta = self.pf.get_estimate()
-                error_pos = self.distance((x, y), (self.odometry.x, self.odometry.y)) #self.get_position()   (self.odometry.x, self.odometry.y)
+                error_pos = self.distance((x, y), self.get_position()) #self.get_position()   (self.odometry.x, self.odometry.y)
                 error_theta = abs(theta - self.odometry.theta)
-                print("{}: {}".format(error_pos, error_theta))
+                #print("{}: {}".format(error_pos, error_theta))
                 if error_pos < 0.05:
-                    print("Update")
+                    print("Update Location")
                     self.odometry.x = x
                     self.odometry.y = y
-                if error_theta < 0.1:
+                if error_theta < 0.02:
+                    print("Update Angle")
                     self.odometry.theta = theta
                 #print(math.degrees(theta))
                 #print("Error: {}, {}, Estimate pos: ({}, {}, {}), odometry pos: ({}, {}, {})".format(error_pos, error_theta, x, y, theta, self.odometry.x, self.odometry.y, self.odometry.theta))
@@ -302,7 +329,8 @@ class Run:
 
         self.create.drive_direct(0, 0)
         self.compensate_location()
-        self.go_to_angle(-math.pi/2.)
+        print(math.degrees(self.final_rotate()))
+        self.go_to_angle(self.final_rotate())
         reached_goal_location = (self.odometry.x, self.odometry.y)
         print("odometry theta: {}".format(math.degrees(self.odometry.theta)))
         print("estimate goal location: {}".format(reached_goal_location))
