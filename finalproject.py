@@ -115,12 +115,12 @@ class Run:
         real_x = position[0] / 100.
         real_y = (self.map.height - position[1]) / 100.
         return (real_x, real_y)
-    
+
     def calcualte_cup_position(self, location):
         distance = 0.05
         cup_x = location[0] - distance * math.cos(location[2])
         cup_y = location[1] - distance * math.sin(location[2])
-        return (cup_x, cup_y) 
+        return (cup_x, cup_y)
 
     def final_rotate(self):
         diff_x = (3 - self.goal_position[0], self.goal_position[0])
@@ -179,6 +179,9 @@ class Run:
         self.arm.close_gripper()
         self.time.sleep(5)
         # Placing cup onto shelf, constants are based on relative postion of arm and shelf
+        for z in np.arange(_z, 0.30, 0.01):
+            self.inverse_kinematics(dist, z)
+            self.time.sleep(0.05)
         self.inverse_kinematics(0.5399, 0.55)
         self.time.sleep(5)
         self.arm.go_to(0, -3*math.pi/4)
@@ -186,11 +189,31 @@ class Run:
         self.arm.open_gripper()
         self.time.sleep(10)
 
-    # calculates distance betweeen arm and cup
+    # # returns closest wall, and distance betweeen arm and cup
     def distance_to_arm(self, x, y):
-        distances = [math.fabs(x - 0.025), math.fabs(x - 3.025), math.fabs(y - 0.025), math.fabs(y - 3.025)]
-        dist = min(distances) + 0.3749 - 0.26 - 0.1
-        return dist
+        wall_dist = (0, 0)
+        min = 3.025
+        dist_to_walls = [(1,math.fabs(x - 0.025)), (2, math.fabs(y - 0.025)), (3, math.fabs(x - 3.025)), (4, math.fabs(y - 3.025))]
+        for pair in dist_to_walls:
+            if pair[1] < min:
+                min = pair[1]
+                wall_dist = (pair[0], pair[1] + 0.3749 - 0.26 - 0.055)
+        print("Closest to wall ", wall_dist[0], "; x distance: ", wall_dist[1])
+        return wall_dist
+
+    def rotate_link0(self, wall_dist, location):
+        if wall_dist[0] == 1:
+            self.arm.go_to(0, (location[1] - self.goal_position[1]))
+            self.time.sleep(5)
+        elif wall_dist[0] == 2:
+            self.arm.go_to(0, (self.goal_position[0] - location[0]))
+            self.time.sleep(5)
+        elif wall_dist[0] == 3:
+            self.arm.go_to(0, (self.goal_position[1] - location[1]))
+            self.time.sleep(5)
+        elif wall_dist[0] == 4:
+            self.arm.go_to(0, (location[0] - self.goal_position[0]))
+            self.time.sleep(5)
 
     def get_position(self):
         self.create.sim_get_position()
@@ -342,12 +365,13 @@ class Run:
         print("real goal location: {}".format(location))
         print("error: {}".format(self.distance(reached_goal_location, location)))
         #location = reached_goal_location
-        
+
 
         # distance_to_arm needs cup's absolute x, y coordinates
         # for current arm and shelf setup, cup's x, y need to satisfy x = 1.6, y = 2.38~2.59
-        dist = self.distance_to_arm(location[0], location[1])
-        self.grip_and_place(dist)
+        wall_dist = self.distance_to_arm(location[0], location[1])
+        self.rotate_link0(wall_dist, location)
+        self.grip_and_place(wall_dist[1])
 
         print("--- %s seconds ---" % (time.time() - start_time))
         while True:
