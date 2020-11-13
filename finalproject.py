@@ -42,7 +42,7 @@ class Run:
         self.joint_angles = np.zeros(7)
 
         # goal location
-        self.goal_position = (2.5, 2.5)
+        self.goal_position = (1.6, 2.5)
         self.goal_shelf = 1
 
         self.offset3 = 0.3105
@@ -74,7 +74,7 @@ class Run:
             math.sin(goal_theta - self.odometry.theta),
             math.cos(goal_theta - self.odometry.theta))) > 0.02:
             output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
-            self.create.drive_direct(int(+output_theta), int(-output_theta))
+            self.create.drive_direct(int(+output_theta)+5, int(-output_theta)-5)
             self.sleep(0.01)
         self.create.drive_direct(0, 0)
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
@@ -123,30 +123,18 @@ class Run:
         return (real_x, real_y)
     
     def final_rotate_angle(self):
-        diff_x = (3 - self.goal_position[0], self.goal_position[0])
-        diff_y = (3 - self.goal_position[1], self.goal_position[1])
-        if diff_x[0] < diff_x[1]:
-            if diff_y[0] < diff_x[0]:
-                return -math.pi/2.
-            elif diff_y[1] < diff_x[0]:
-                return math.pi/2.
-            elif diff_x[0] == diff_y[0]:
-                return math.pi+math.pi/4.
-            elif diff_x[0] == diff_y[1]:
-                return math.pi-math.pi/4.
-            else:
-                return math.pi
-        else:
-            if diff_y[0] < diff_x[1]:
-                return -math.pi/2.
-            elif diff_y[1] < diff_x[1]:
-                return math.pi/2.
-            elif diff_x[1] == diff_y[0]:
-                return -math.pi/4
-            elif diff_x[1] == diff_y[1]:
-                return math.pi/4
-            else:
-                return 0
+        self.arm.get_position()
+        self.time.sleep(1)
+        arm_location = self.arm.get_position()
+
+        if arm_location[1] > 3:
+            return -math.pi/2.
+        elif arm_location[1] < 0:
+            return math.pi/2.
+        elif arm_location[0] < 0:
+            return 0
+        elif arm_location[0] > 3:
+            return math.pi
 
 
     ### section2
@@ -235,7 +223,7 @@ class Run:
         current_loc = self.get_position()
         self.odometry.x = current_loc[0]
         self.odometry.y = current_loc[1]
-        base_speed = 20
+        base_speed = 15
         while True:
             state = self.create.update()
             old_x = self.odometry.x
@@ -250,7 +238,7 @@ class Run:
 
                 distance = math.sqrt(math.pow(self.goal_position[0] - self.odometry.x, 2) + math.pow(self.goal_position[1] - self.odometry.y, 2))
                 x_distance = abs(self.odometry.x - self.goal_position[0])
-                if x_distance < 0.017 and distance < 0.03:
+                if x_distance < 0.017 and distance < 0.04:
                     self.create.drive_direct(0, 0)
                     break
 
@@ -268,6 +256,7 @@ class Run:
         self.odometry.x = start_position[0]
         self.odometry.y = start_position[1]
         self.odometry.theta = 0
+        self.pf.set_particle((start_position[0], start_position[1], self.odometry.theta))
         start_position = self.real_to_image(start_position)
         self.rrt.build(start_position, 6000, 6)
         goal = self.rrt.nearest_neighbor(self.real_to_image(self.goal_position))
@@ -353,6 +342,7 @@ class Run:
             count += 1
 
         self.create.drive_direct(0, 0)
+        print("Final Step")
         self.compensate_location()
         self.go_to_angle(self.final_rotate_angle())
         self.create.drive_direct(0, 0)

@@ -19,6 +19,14 @@ class KukaLBR4PlusVrep:
                 vrep.simx_opmode_oneshot_wait)
             self._joints.append(joint)
 
+    def get_position(self):
+        rc, (x,y,z) = vrep.simxGetObjectPosition(
+            self._clientID,
+            self._joints[0],
+            -1,
+            vrep.simx_opmode_streaming)
+        return (x, y)
+
     def close_gripper(self):
         vrep.simxSetIntegerSignal(self._clientID, 'P_Grip_straight_motor', 1, vrep.simx_opmode_oneshot_wait)
 

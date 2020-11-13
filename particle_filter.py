@@ -31,6 +31,10 @@ class ParticleFilter:
                 np.random.uniform(0, 2*math.pi),
                 # 0,
                 math.log(p)))
+    
+    def set_particle(self, location):
+        ln_p = self._particles[0].ln_p
+        self._particles[0] = Particle(location[0], location[1], location[2], ln_p)
 
     def move_by(self, x, y, theta):
         for particle in self._particles:
